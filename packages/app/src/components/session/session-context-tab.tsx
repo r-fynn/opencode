@@ -1,6 +1,6 @@
-import { createMemo, createEffect, createResource, on, onCleanup, For, Show } from "solid-js"
+import { createMemo, createEffect, onCleanup, For, Show } from "solid-js"
 import type { JSX } from "solid-js"
-import { useSync, type DirectorySync } from "@/context/sync"
+import { useSync } from "@/context/sync"
 import { checksum } from "@opencode-ai/core/util/encode"
 import { findLast } from "@opencode-ai/core/util/array"
 import { same } from "@/utils/same"
@@ -11,12 +11,13 @@ import { StickyAccordionHeader } from "@opencode-ai/ui/sticky-accordion-header"
 import { File } from "@opencode-ai/session-ui/file"
 import { Markdown } from "@opencode-ai/session-ui/markdown"
 import { ScrollView } from "@opencode-ai/ui/scroll-view"
-import type { Message, OpencodeClient, Part, UserMessage } from "@opencode-ai/sdk/v2/client"
+import type { Message, Part, UserMessage } from "@opencode-ai/sdk/v2/client"
 import { showToast } from "@/utils/toast"
 import { downloadSessionExport, fetchSessionExport, sessionExportFilename } from "@/utils/session-export"
 import { useLanguage } from "@/context/language"
 import { useProviders } from "@/hooks/use-providers"
 import { useSDK } from "@/context/sdk"
+import { useSubagentCost } from "@/hooks/use-subagent-cost"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { getSessionContext } from "./session-context-metrics"
 import { estimateSessionContextBreakdown, type SessionContextBreakdownKey } from "./session-context-breakdown"
@@ -93,31 +94,6 @@ function RawMessage(props: {
 
 const emptyMessages: Message[] = []
 const emptyUserMessages: UserMessage[] = []
-const emptyDescendantIDs: string[] = []
-
-async function collectDescendantSessionIDs(input: {
-  sessionID: string
-  client: OpencodeClient
-  remember: DirectorySync["session"]["remember"]
-}) {
-  const ids: string[] = []
-  const seen = new Set<string>([input.sessionID])
-  const queue = [input.sessionID]
-
-  while (queue.length > 0) {
-    const parentID = queue.shift()!
-    const result = await input.client.session.children({ sessionID: parentID })
-    for (const child of result.data ?? []) {
-      if (seen.has(child.id)) continue
-      seen.add(child.id)
-      input.remember(child)
-      ids.push(child.id)
-      queue.push(child.id)
-    }
-  }
-
-  return ids
-}
 
 export function SessionContextTab() {
   const sync = useSync()
@@ -170,21 +146,10 @@ export function SessionContextTab() {
     return usd().format(info()?.cost ?? 0)
   })
 
-  const [descendantSessionIDs] = createResource(
-    () => (params.id ? ([params.id, messages().length] as const) : undefined),
-    async ([sessionID]) =>
-      collectDescendantSessionIDs({
-        sessionID,
-        client: sdk().client,
-        remember: sync().session.remember,
-      }),
-    { initialValue: emptyDescendantIDs },
+  const { subagentCost, hasSubagents } = useSubagentCost(
+    () => params.id,
+    () => messages().length,
   )
-
-  const subagentCost = createMemo(() => {
-    const ids = descendantSessionIDs() ?? emptyDescendantIDs
-    return ids.reduce((total, id) => total + (sync().session.get(id)?.cost ?? 0), 0)
-  })
 
   const totalCostWithSubagents = createMemo(() => {
     return usd().format((info()?.cost ?? 0) + subagentCost())
@@ -267,7 +232,7 @@ export function SessionContextTab() {
       { label: "context.stats.assistantMessages", value: () => counts().assistant.toLocaleString(language.intl()) },
       { label: "context.stats.totalCost", value: cost },
     ]
-    if ((descendantSessionIDs()?.length ?? 0) > 0)
+    if (hasSubagents())
       base.push({ label: "context.stats.totalCostWithSubagents", value: () => totalCostWithSubagents() })
     base.push(
       { label: "context.stats.sessionCreated", value: () => formatter().time(info()?.time.created) },

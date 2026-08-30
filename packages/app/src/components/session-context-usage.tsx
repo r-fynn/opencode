@@ -12,6 +12,7 @@ import { useSync } from "@/context/sync"
 import { useLanguage } from "@/context/language"
 import { useProviders } from "@/hooks/use-providers"
 import { useSDK } from "@/context/sdk"
+import { useSubagentCost } from "@/hooks/use-subagent-cost"
 import { getSessionContext } from "@/components/session/session-context-metrics"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { createSessionTabs } from "@/pages/session/helpers"
@@ -77,6 +78,11 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
   const cost = createMemo(() => {
     return usd().format(info()?.cost ?? 0)
   })
+  const { subagentCost, hasSubagents } = useSubagentCost(
+    () => params.id,
+    () => messages().length,
+  )
+  const totalCostWithSubagents = createMemo(() => usd().format((info()?.cost ?? 0) + subagentCost()))
   const contextVisible = createMemo(() => view().reviewPanel.opened() && tabState.activeTab() === "context")
   const hasOtherTabs = createMemo(() =>
     tabs()
@@ -128,6 +134,9 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
   const tooltipValue = () => (
     <div class="flex w-[120px] flex-col gap-2">
       <ContextTooltipRow name={language.t("context.usage.cost")} value={cost()} />
+      <Show when={hasSubagents()}>
+        <ContextTooltipRow name={language.t("context.usage.costWithSubagents")} value={totalCostWithSubagents()} />
+      </Show>
       <ContextTooltipRow name={language.t("context.usage.usage")} value={`${context()?.usage ?? 0}%`} />
       <ContextTooltipRow
         name={language.t("context.usage.tokens")}

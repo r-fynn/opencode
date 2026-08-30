@@ -515,6 +515,7 @@ export const dict = {
   "context.usage.tokens": "Tokens",
   "context.usage.usage": "Usage",
   "context.usage.cost": "Cost",
+  "context.usage.costWithSubagents": "Cost (incl. subagents)",
   "context.usage.clickToView": "Click to view context",
   "context.usage.view": "View context usage",
 
