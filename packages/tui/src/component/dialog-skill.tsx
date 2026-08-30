@@ -1,6 +1,6 @@
 import { TextAttributes } from "@opentui/core"
 import { DialogSelect, type DialogSelectOption } from "../ui/dialog-select"
-import * as fuzzysort from "fuzzysort"
+import { prepare } from "fuzzysort"
 import { createResource, createMemo, createSignal } from "solid-js"
 import { useDialog } from "../ui/dialog"
 import { useSDK } from "../context/sdk"
@@ -43,7 +43,7 @@ export function DialogSkill(props: DialogSkillProps) {
       // Prepared once here (not a raw string) so fuzzysort doesn't re-tokenize the
       // full skill body on every keystroke — it skips its own cache for targets over
       // 999 chars, which most skill bodies exceed.
-      content: skill.content ? fuzzysort.prepare(skill.content) : undefined,
+      content: skill.content ? prepare(skill.content) : undefined,
       value: skill.name,
       category: "Skills",
       onSelect: () => {

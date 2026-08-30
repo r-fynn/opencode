@@ -12,7 +12,7 @@ import { entries, filter, flatMap, groupBy, pipe } from "remeda"
 import { batch, createEffect, createMemo, createSignal, For, Show, type JSX, on, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useTerminalDimensions } from "@opentui/solid"
-import * as fuzzysort from "fuzzysort"
+import { go, type Result, type Prepared } from "fuzzysort"
 import { isDeepEqual } from "remeda"
 import { useDialog, type DialogContext } from "./dialog"
 import { Locale } from "../util/locale"
@@ -59,7 +59,7 @@ export interface DialogSelectOption<T = any> {
   value: T
   description?: string
   /** Extra text to match against when filtering, never rendered (e.g. a skill's full body). */
-  content?: string | fuzzysort.Prepared
+  content?: string | Prepared
   details?: string[]
   footer?: JSX.Element | string
   titleWidth?: number
@@ -163,17 +163,16 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
     if (!needle) return options
 
     // prioritize title matches (weight: 2) over description, content, and category (weight: 1 each).
-    const bestDesc = (r: fuzzysort.Result) => Math.max(
+    const bestDesc = (r: Result) => Math.max(
       r[1]?.score ?? -Infinity,
       r[2]?.score ?? -Infinity,
       r[3]?.score ?? -Infinity,
     )
 
-    const result = fuzzysort
-      .go(needle, options, {
-        keys: ["title", "description", "content", "category"],
-        scoreFn: (r) => r[0].score * 2 + bestDesc(r),
-      })
+    const result = go(needle, options, {
+      keys: ["title", "description", "content", "category"],
+      scoreFn: (r) => r[0].score * 2 + bestDesc(r),
+    })
       .map((x) => x.obj)
 
     return result
