@@ -1,6 +1,6 @@
-import { createMemo, createEffect, on, onCleanup, For, Show } from "solid-js"
+import { createMemo, createEffect, createResource, on, onCleanup, For, Show } from "solid-js"
 import type { JSX } from "solid-js"
-import { useSync } from "@/context/sync"
+import { useSync, type DirectorySync } from "@/context/sync"
 import { checksum } from "@opencode-ai/core/util/encode"
 import { findLast } from "@opencode-ai/core/util/array"
 import { same } from "@/utils/same"
@@ -11,7 +11,7 @@ import { StickyAccordionHeader } from "@opencode-ai/ui/sticky-accordion-header"
 import { File } from "@opencode-ai/session-ui/file"
 import { Markdown } from "@opencode-ai/session-ui/markdown"
 import { ScrollView } from "@opencode-ai/ui/scroll-view"
-import type { Message, Part, UserMessage } from "@opencode-ai/sdk/v2/client"
+import type { Message, OpencodeClient, Part, UserMessage } from "@opencode-ai/sdk/v2/client"
 import { showToast } from "@/utils/toast"
 import { downloadSessionExport, fetchSessionExport, sessionExportFilename } from "@/utils/session-export"
 import { useLanguage } from "@/context/language"
@@ -93,6 +93,31 @@ function RawMessage(props: {
 
 const emptyMessages: Message[] = []
 const emptyUserMessages: UserMessage[] = []
+const emptyDescendantIDs: string[] = []
+
+async function collectDescendantSessionIDs(input: {
+  sessionID: string
+  client: OpencodeClient
+  remember: DirectorySync["session"]["remember"]
+}) {
+  const ids: string[] = []
+  const seen = new Set<string>([input.sessionID])
+  const queue = [input.sessionID]
+
+  while (queue.length > 0) {
+    const parentID = queue.shift()!
+    const result = await input.client.session.children({ sessionID: parentID })
+    for (const child of result.data ?? []) {
+      if (seen.has(child.id)) continue
+      seen.add(child.id)
+      input.remember(child)
+      ids.push(child.id)
+      queue.push(child.id)
+    }
+  }
+
+  return ids
+}
 
 export function SessionContextTab() {
   const sync = useSync()
@@ -143,6 +168,26 @@ export function SessionContextTab() {
 
   const cost = createMemo(() => {
     return usd().format(info()?.cost ?? 0)
+  })
+
+  const [descendantSessionIDs] = createResource(
+    () => (params.id ? ([params.id, messages().length] as const) : undefined),
+    async ([sessionID]) =>
+      collectDescendantSessionIDs({
+        sessionID,
+        client: sdk().client,
+        remember: sync().session.remember,
+      }),
+    { initialValue: emptyDescendantIDs },
+  )
+
+  const subagentCost = createMemo(() => {
+    const ids = descendantSessionIDs() ?? emptyDescendantIDs
+    return ids.reduce((total, id) => total + (sync().session.get(id)?.cost ?? 0), 0)
+  })
+
+  const totalCostWithSubagents = createMemo(() => {
+    return usd().format((info()?.cost ?? 0) + subagentCost())
   })
 
   const counts = createMemo(() => {
@@ -201,28 +246,35 @@ export function SessionContextTab() {
     return language.t("context.breakdown.other")
   }
 
-  const stats = [
-    { label: "context.stats.session", value: () => info()?.title ?? params.id ?? "—" },
-    { label: "context.stats.messages", value: () => counts().all.toLocaleString(language.intl()) },
-    { label: "context.stats.provider", value: providerLabel },
-    { label: "context.stats.model", value: modelLabel },
-    { label: "context.stats.limit", value: () => formatter().number(ctx()?.limit) },
-    { label: "context.stats.totalTokens", value: () => formatter().number(ctx()?.total) },
-    { label: "context.stats.usage", value: () => formatter().percent(ctx()?.usage) },
-    { label: "context.stats.inputTokens", value: () => formatter().number(ctx()?.input) },
-    { label: "context.stats.outputTokens", value: () => formatter().number(ctx()?.message.tokens.output) },
-    { label: "context.stats.reasoningTokens", value: () => formatter().number(ctx()?.message.tokens.reasoning) },
-    {
-      label: "context.stats.cacheTokens",
-      value: () =>
-        `${formatter().number(ctx()?.message.tokens.cache.read)} / ${formatter().number(ctx()?.message.tokens.cache.write)}`,
-    },
-    { label: "context.stats.userMessages", value: () => counts().user.toLocaleString(language.intl()) },
-    { label: "context.stats.assistantMessages", value: () => counts().assistant.toLocaleString(language.intl()) },
-    { label: "context.stats.totalCost", value: cost },
-    { label: "context.stats.sessionCreated", value: () => formatter().time(info()?.time.created) },
-    { label: "context.stats.lastActivity", value: () => formatter().time(ctx()?.message.time.created) },
-  ] satisfies { label: string; value: () => JSX.Element }[]
+  const stats = createMemo(() => {
+    const base: { label: string; value: () => JSX.Element }[] = [
+      { label: "context.stats.session", value: () => info()?.title ?? params.id ?? "—" },
+      { label: "context.stats.messages", value: () => counts().all.toLocaleString(language.intl()) },
+      { label: "context.stats.provider", value: providerLabel },
+      { label: "context.stats.model", value: modelLabel },
+      { label: "context.stats.limit", value: () => formatter().number(ctx()?.limit) },
+      { label: "context.stats.totalTokens", value: () => formatter().number(ctx()?.total) },
+      { label: "context.stats.usage", value: () => formatter().percent(ctx()?.usage) },
+      { label: "context.stats.inputTokens", value: () => formatter().number(ctx()?.input) },
+      { label: "context.stats.outputTokens", value: () => formatter().number(ctx()?.message.tokens.output) },
+      { label: "context.stats.reasoningTokens", value: () => formatter().number(ctx()?.message.tokens.reasoning) },
+      {
+        label: "context.stats.cacheTokens",
+        value: () =>
+          `${formatter().number(ctx()?.message.tokens.cache.read)} / ${formatter().number(ctx()?.message.tokens.cache.write)}`,
+      },
+      { label: "context.stats.userMessages", value: () => counts().user.toLocaleString(language.intl()) },
+      { label: "context.stats.assistantMessages", value: () => counts().assistant.toLocaleString(language.intl()) },
+      { label: "context.stats.totalCost", value: cost },
+    ]
+    if ((descendantSessionIDs()?.length ?? 0) > 0)
+      base.push({ label: "context.stats.totalCostWithSubagents", value: () => totalCostWithSubagents() })
+    base.push(
+      { label: "context.stats.sessionCreated", value: () => formatter().time(info()?.time.created) },
+      { label: "context.stats.lastActivity", value: () => formatter().time(ctx()?.message.time.created) },
+    )
+    return base
+  })
 
   const exportSession = async () => {
     const sessionID = params.id
@@ -309,7 +361,7 @@ export function SessionContextTab() {
     >
       <div class="px-6 pt-4 pb-10 flex flex-col gap-10">
         <div class="grid grid-cols-1 @[32rem]:grid-cols-2 gap-4">
-          <For each={stats}>
+          <For each={stats()}>
             {(stat) => <Stat label={language.t(stat.label as Parameters<typeof language.t>[0])} value={stat.value()} />}
           </For>
         </div>
