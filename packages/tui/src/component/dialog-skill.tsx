@@ -39,6 +39,7 @@ export function DialogSkill(props: DialogSkillProps) {
     return list.map((skill) => ({
       title: skill.name.padEnd(maxWidth),
       description: skill.description?.replace(/\s+/g, " ").trim(),
+      searchText: skill.content?.slice(0, 500),
       value: skill.name,
       category: "Skills",
       onSelect: () => {

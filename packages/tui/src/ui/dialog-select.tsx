@@ -58,6 +58,7 @@ export interface DialogSelectOption<T = any> {
   titleView?: JSX.Element
   value: T
   description?: string
+  searchText?: string
   details?: string[]
   footer?: JSX.Element | string
   titleWidth?: number
@@ -160,12 +161,17 @@ export function DialogSelect<T>(props: DialogSelectProps<T>) {
     )
     if (!needle) return options
 
-    // prioritize title matches (weight: 2) over category matches (weight: 1).
-    // users typically search by the item name, and not its category.
+    // prioritize title matches (weight: 2) over description, searchText, and category (weight: 1 each).
+    const bestDesc = (r: fuzzysort.Result) => Math.max(
+      r[1]?.score ?? -Infinity,
+      r[2]?.score ?? -Infinity,
+      r[3]?.score ?? -Infinity,
+    )
+
     const result = fuzzysort
       .go(needle, options, {
-        keys: ["title", "category"],
-        scoreFn: (r) => r[0].score * 2 + r[1].score,
+        keys: ["title", "description", "searchText", "category"],
+        scoreFn: (r) => r[0].score * 2 + bestDesc(r),
       })
       .map((x) => x.obj)
 
