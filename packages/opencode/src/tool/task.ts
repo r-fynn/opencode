@@ -197,8 +197,11 @@ export const TaskTool = Tool.define(
       const ops = ctx.extra?.promptOps as TaskPromptOps
       if (!ops) return yield* Effect.fail(new Error("TaskTool requires promptOps in ctx.extra"))
 
+      const RESUME_REMINDER =
+        "[This message resumes a previous subagent session. Pick up from where you left off using the context above, and still finish by returning the final result requested by the parent task in your last message.]\n\n"
+
       const runTask = Effect.fn("TaskTool.runTask")(function* () {
-        const parts = yield* ops.resolvePromptParts(params.prompt)
+        const parts = yield* ops.resolvePromptParts(session ? RESUME_REMINDER + params.prompt : params.prompt)
         const result = yield* ops.prompt({
           messageID: MessageID.ascending(),
           sessionID: nextSession.id,

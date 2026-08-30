@@ -580,12 +580,17 @@ const layer = Layer.effect(
           const part = match.part
           const end = Date.now()
           const metadata = "metadata" in part.state && isRecord(part.state.metadata) ? part.state.metadata : {}
+          const subagentSessionID =
+            part.tool === "task" && typeof metadata.sessionId === "string" ? metadata.sessionId : undefined
+          const error = subagentSessionID
+            ? `Tool execution aborted. The subagent session was not lost - pass task_id: "${subagentSessionID}" to the task tool to resume it and continue from where it left off.`
+            : "Tool execution aborted"
           yield* session.updatePart({
             ...part,
             state: {
               ...part.state,
               status: "error",
-              error: "Tool execution aborted",
+              error,
               metadata: { ...metadata, interrupted: true },
               time: { start: "time" in part.state ? part.state.time.start : end, end },
             },

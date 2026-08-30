@@ -96,6 +96,11 @@ const seed = Effect.fn("TaskToolTest.seed")(function* (title = "Pinned") {
   return { chat, assistant }
 })
 
+function sentPromptText(input: SessionPrompt.PromptInput | undefined): string | undefined {
+  const part = input?.parts?.find((part) => part.type === "text")
+  return part && "text" in part ? part.text : undefined
+}
+
 function stubOps(opts?: {
   onPrompt?: (input: SessionPrompt.PromptInput) => void
   text?: string
@@ -281,6 +286,38 @@ describe("tool.task", () => {
       expect(result.output).toContain(`<task id="${child.id}" state="completed">`)
       expect(seen?.sessionID).toBe(child.id)
       expect(seen?.variant).toBe("xhigh")
+      expect(sentPromptText(seen)).toContain("resumes a previous subagent session")
+      expect(sentPromptText(seen)).toContain("look into the cache key path")
+    }),
+  )
+
+  it.instance("execute does not add a resume reminder for a fresh task session", () =>
+    Effect.gen(function* () {
+      const { chat, assistant } = yield* seed()
+      const tool = yield* TaskTool
+      const def = yield* tool.init()
+      let seen: SessionPrompt.PromptInput | undefined
+      const promptOps = stubOps({ text: "done", onPrompt: (input) => (seen = input) })
+
+      yield* def.execute(
+        {
+          description: "inspect bug",
+          prompt: "look into the cache key path",
+          subagent_type: "general",
+        },
+        {
+          sessionID: chat.id,
+          messageID: assistant.id,
+          agent: "build",
+          abort: new AbortController().signal,
+          extra: { promptOps },
+          messages: [],
+          metadata: () => Effect.void,
+          ask: () => Effect.void,
+        },
+      )
+
+      expect(sentPromptText(seen)).toBe("look into the cache key path")
     }),
   )
 
@@ -846,9 +883,10 @@ describe("tool.task", () => {
       expect(result.output).toContain("Background task updated")
       first.resolve()
       expect((yield* jobs.get(started.metadata.sessionId))?.status).toBe("running")
-      expect((yield* Effect.promise(() => updated.promise)).parts).toEqual([
-        { type: "text", text: "also inspect cancellation" },
-      ])
+      expect(sentPromptText(yield* Effect.promise(() => updated.promise))).toContain(
+        "resumes a previous subagent session",
+      )
+      expect(sentPromptText(yield* Effect.promise(() => updated.promise))).toContain("also inspect cancellation")
 
       second.resolve()
       const waited = yield* jobs.wait({ id: started.metadata.sessionId, timeout: 1_000 })
