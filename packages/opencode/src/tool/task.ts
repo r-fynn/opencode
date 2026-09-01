@@ -14,6 +14,7 @@ import { Effect, Exit, Schema, Scope } from "effect"
 import { EffectBridge } from "@/effect/bridge"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { Database } from "@opencode-ai/core/database/database"
+import { SessionStatus } from "../session/status"
 
 export interface TaskPromptOps {
   cancel(sessionID: SessionID): Effect.Effect<void>
@@ -63,7 +64,7 @@ export const Parameters = Schema.Struct({
 
 function renderOutput(input: {
   sessionID: SessionID
-  state: "running" | "completed" | "error"
+  state: "running" | "completed" | "error" | "killed"
   summary?: string
   text: string
 }) {
@@ -78,6 +79,22 @@ function renderOutput(input: {
   ].join("\n")
 }
 
+const LOCKED_RESUME_REFUSAL = (sessionID: SessionID) =>
+  `The user killed this subagent (task_id: ${sessionID}) and marked the underlying task as no longer needed. ` +
+  `This resume request is refused. Do not resume this subagent, and do not pursue this task through any other ` +
+  `means either (e.g. a new subagent covering the same ground). This is final unless the user explicitly restarts ` +
+  `it themselves.`
+
+const PLAIN_KILL_TEXT = (sessionID: SessionID) =>
+  `This subagent was stopped by the user before it finished; its work is incomplete. The underlying task still ` +
+  `stands: you may resume this exact subagent (task_id: ${sessionID}) or hand the task to a fresh subagent, ` +
+  `whichever you judge best.`
+
+const LOCKED_KILL_TEXT =
+  `This subagent was stopped by the user, who marked the underlying task as no longer needed. Its work is ` +
+  `incomplete and should not be completed. Do not resume this subagent (a resume attempt will be refused), and ` +
+  `do not pursue this task through any other means either (e.g. a new subagent covering the same ground).`
+
 export const TaskTool = Tool.define(
   id,
   Effect.gen(function* () {
@@ -88,6 +105,7 @@ export const TaskTool = Tool.define(
     const scope = yield* Scope.Scope
     const flags = yield* RuntimeFlags.Service
     const database = yield* Database.Service
+    const sessionStatus = yield* SessionStatus.Service
 
     const run = Effect.fn("TaskTool.execute")(function* (
       params: Schema.Schema.Type<typeof Parameters>,
@@ -136,6 +154,12 @@ export const TaskTool = Tool.define(
       const session = params.task_id
         ? yield* sessions.get(SessionID.make(params.task_id)).pipe(Effect.catchCause(() => Effect.succeed(undefined)))
         : undefined
+      if (session) {
+        const st = yield* sessionStatus.get(session.id)
+        if (st.type === "killed" && st.flavor === "locked") {
+          return yield* Effect.fail(new Error(LOCKED_RESUME_REFUSAL(session.id)))
+        }
+      }
       const childPermission = deriveSubagentSessionPermission({
         parentSessionPermission: parent.permission ?? [],
         subagent: next,
@@ -225,7 +249,7 @@ export const TaskTool = Tool.define(
       })
 
       const inject = Effect.fn("TaskTool.injectBackgroundResult")(function* (
-        state: "completed" | "error",
+        state: "completed" | "error" | "killed",
         text: string,
       ) {
         const currentParent = yield* sessions.get(ctx.sessionID)
@@ -244,7 +268,9 @@ export const TaskTool = Tool.define(
                   summary:
                     state === "completed"
                       ? `Background task completed: ${params.description}`
-                      : `Background task failed: ${params.description}`,
+                      : state === "killed"
+                        ? `Background task killed: ${params.description}`
+                        : `Background task failed: ${params.description}`,
                   text,
                 }),
               },
@@ -258,6 +284,12 @@ export const TaskTool = Tool.define(
           Effect.flatMap((result) => {
             if (result.info?.status === "completed") return inject("completed", result.info.output ?? "")
             if (result.info?.status === "error") return inject("error", result.info.error ?? "")
+            if (result.info?.status === "cancelled")
+              return Effect.gen(function* () {
+                const st = yield* sessionStatus.get(nextSession.id)
+                if (st.type !== "killed") return
+                return yield* inject("killed", st.flavor === "locked" ? LOCKED_KILL_TEXT : PLAIN_KILL_TEXT(nextSession.id))
+              })
             return Effect.void
           }),
           Effect.forkIn(scope, { startImmediately: true }),
@@ -337,7 +369,21 @@ export const TaskTool = Tool.define(
             )
             if (result?.metadata?.background === true) return backgroundResult()
             if (result?.status === "error") return yield* Effect.fail(new Error(result.error ?? "Task failed"))
-            if (result?.status === "cancelled") return yield* Effect.fail(new Error("Task cancelled"))
+            if (result?.status === "cancelled") {
+              const st = yield* sessionStatus.get(nextSession.id)
+              if (st.type === "killed") {
+                return {
+                  title: params.description,
+                  metadata,
+                  output: renderOutput({
+                    sessionID: nextSession.id,
+                    state: "killed",
+                    text: st.flavor === "locked" ? LOCKED_KILL_TEXT : PLAIN_KILL_TEXT(nextSession.id),
+                  }),
+                }
+              }
+              return yield* Effect.fail(new Error("Task cancelled"))
+            }
             return {
               title: params.description,
               metadata,

@@ -27,10 +27,12 @@ import {
   DiffQuery,
   ForkPayload,
   InitPayload,
+  KillPayload,
   ListQuery,
   MessagesQuery,
   PermissionResponsePayload,
   PromptPayload,
+  RepromptPayload,
   RevertPayload,
   ShellPayload,
   SummarizePayload,
@@ -234,6 +236,35 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       return true
     })
 
+    const kill = Effect.fn("SessionHttpApi.kill")(function* (ctx: {
+      params: { sessionID: SessionID }
+      payload: typeof KillPayload.Type
+    }) {
+      yield* requireSession(ctx.params.sessionID)
+      yield* promptSvc.kill(ctx.params.sessionID, ctx.payload.flavor)
+      return true
+    })
+
+    const reprompt = Effect.fn("SessionHttpApi.reprompt")(function* (ctx: {
+      params: { sessionID: SessionID }
+      payload: typeof RepromptPayload.Type
+    }) {
+      yield* requireSession(ctx.params.sessionID)
+      yield* promptSvc.reprompt(ctx.params.sessionID, ctx.payload.note).pipe(
+        Effect.catchCause((cause) =>
+          Effect.gen(function* () {
+            yield* Effect.logError("reprompt failed", { sessionID: ctx.params.sessionID, cause })
+            yield* events.publish(Session.Event.Error, {
+              sessionID: ctx.params.sessionID,
+              error: new NamedError.Unknown({ message: Cause.pretty(cause) }).toObject(),
+            })
+          }),
+        ),
+        Effect.forkIn(scope, { startImmediately: true }),
+      )
+      return HttpApiSchema.NoContent.make()
+    })
+
     const init = Effect.fn("SessionHttpApi.init")(function* (ctx: {
       params: { sessionID: SessionID }
       payload: typeof InitPayload.Type
@@ -424,6 +455,8 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
       .handle("update", update)
       .handleRaw("fork", forkRaw)
       .handle("abort", abort)
+      .handle("kill", kill)
+      .handle("reprompt", reprompt)
       .handle("init", init)
       .handle("share", share)
       .handle("unshare", unshare)

@@ -195,6 +195,8 @@ import type {
   SessionGetResponses,
   SessionInitErrors,
   SessionInitResponses,
+  SessionKillErrors,
+  SessionKillResponses,
   SessionListErrors,
   SessionListResponses,
   SessionMessageErrors,
@@ -205,6 +207,8 @@ import type {
   SessionPromptAsyncResponses,
   SessionPromptErrors,
   SessionPromptResponses,
+  SessionRepromptErrors,
+  SessionRepromptResponses,
   SessionRevertErrors,
   SessionRevertResponses,
   SessionShareErrors,
@@ -3934,6 +3938,84 @@ export class Session2 extends HeyApiClient {
       url: "/session/{sessionID}/abort",
       ...options,
       ...params,
+    })
+  }
+
+  /**
+   * Kill subagent
+   *
+   * Stop a running subagent. 'plain' leaves it resumable by the orchestrator or a human; 'locked' additionally refuses any future orchestrator-initiated resume of this exact session (a human can still restart it).
+   */
+  public kill<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      workspace?: string
+      flavor?: "plain" | "locked"
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "flavor" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<SessionKillResponses, SessionKillErrors, ThrowOnError>({
+      url: "/session/{sessionID}/kill",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Interrupt & reprompt, or restart, a subagent
+   *
+   * Stop whatever the session is currently doing (if anything) and resend its original first prompt, plus an optional note, as a fresh turn. Used for both 'Interrupt & Reprompt' on a running subagent and 'Restart' on a previously killed one — always allowed for a human-initiated call, regardless of any lock.
+   */
+  public reprompt<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      workspace?: string
+      note?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "note" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<SessionRepromptResponses, SessionRepromptErrors, ThrowOnError>({
+      url: "/session/{sessionID}/reprompt",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     })
   }
 

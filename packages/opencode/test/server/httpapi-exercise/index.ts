@@ -1414,6 +1414,41 @@ const scenarios: Scenario[] = [
       check(body === true, "missing session abort should remain a no-op success")
     }),
   http.protected
+    .post("/session/{sessionID}/kill", "session.kill")
+    .mutating()
+    .seeded((ctx) => ctx.session({ title: "Kill session" }))
+    .at((ctx) => ({
+      path: route("/session/{sessionID}/kill", { sessionID: ctx.state.id }),
+      headers: ctx.headers(),
+      body: { flavor: "plain" },
+    }))
+    .json(200, (body) => {
+      check(body === true, "kill should return true")
+    }),
+  http.protected
+    .post("/session/{sessionID}/reprompt", "session.reprompt")
+    .preserveDatabase()
+    .withLlm()
+    .seeded((ctx) =>
+      Effect.gen(function* () {
+        const session = yield* ctx.session({ title: "Reprompt session" })
+        yield* ctx.message(session.id, { text: "original task" })
+        yield* ctx.llmText("reprompted assistant")
+        yield* ctx.llmText("reprompted assistant")
+        return session
+      }),
+    )
+    .at((ctx) => ({
+      path: route("/session/{sessionID}/reprompt", { sessionID: ctx.state.id }),
+      headers: ctx.headers(),
+      body: { note: "extra context" },
+    }))
+    .status(204, (ctx) =>
+      Effect.gen(function* () {
+        yield* ctx.llmWait(1)
+      }),
+    ),
+  http.protected
     .post("/session/{sessionID}/init", "session.init")
     .preserveDatabase()
     .withLlm()
@@ -1746,6 +1781,7 @@ const llmScenarios = new Set([
   "session.init",
   "session.prompt",
   "session.prompt_async",
+  "session.reprompt",
   "session.command",
   "session.summarize",
 ])

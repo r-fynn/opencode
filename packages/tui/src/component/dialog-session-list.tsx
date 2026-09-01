@@ -236,18 +236,21 @@ export function DialogSessionList() {
       const isDeleting = toDelete() === x.id
       const status = sync.data.session_status?.[x.id]
       const isWorking = status?.type === "busy" || status?.type === "retry"
+      const killedFlavor = status?.type === "killed" ? status.flavor : undefined
       const slot = slotByID.get(x.id)
       const gutter = isWorking
         ? () => <Spinner />
-        : slot !== undefined
-          ? () => <text fg={theme.accent}>{slot}</text>
-          : undefined
+        : killedFlavor
+          ? () => <text fg={killedFlavor === "locked" ? theme.error : theme.warning}>●</text>
+          : slot !== undefined
+            ? () => <text fg={theme.accent}>{slot}</text>
+            : undefined
       return {
         title: isDeleting ? `Press ${deleteHint()} again to confirm` : x.title,
         bg: isDeleting ? theme.error : undefined,
         value: x.id,
         category,
-        footer,
+        footer: killedFlavor ? (killedFlavor === "locked" ? "Killed — locked" : "Killed") : footer,
         gutter,
       }
     }

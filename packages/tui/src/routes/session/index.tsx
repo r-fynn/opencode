@@ -51,6 +51,8 @@ import { DialogMessage } from "./dialog-message"
 import type { PromptInfo } from "../../component/prompt/history"
 import { DialogConfirm } from "../../ui/dialog-confirm"
 import { DialogTimeline } from "./dialog-timeline"
+import { DialogSubagentKill } from "./dialog-subagent-kill"
+import { DialogSubagentReprompt } from "./dialog-subagent-reprompt"
 import { DialogForkFromTimeline } from "./dialog-fork-from-timeline"
 import { DialogSessionRename } from "../../component/dialog-session-rename"
 import { Sidebar } from "./sidebar"
@@ -141,6 +143,9 @@ const sessionBindingCommands = [
   "session.parent",
   "session.child.next",
   "session.child.previous",
+  "subagent.kill",
+  "subagent.restart",
+  "subagent.reprompt",
 ] as const
 
 const sessionGlobalBindingCommands = [
@@ -211,6 +216,12 @@ export function Session() {
       .toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   })
   const messages = createMemo(() => sync.data.message[route.sessionID] ?? [])
+  const subagentStatus = createMemo(() => sync.data.session_status[route.sessionID])
+  const subagentRunning = createMemo(() => {
+    const type = subagentStatus()?.type
+    return type === "busy" || type === "retry"
+  })
+  const subagentKilled = createMemo(() => subagentStatus()?.type === "killed")
   const messagesBeforeRevert = () => {
     const messageID = session()?.revert?.messageID
     if (!messageID) return messages()
@@ -1081,6 +1092,36 @@ export function Session() {
         dialog.clear()
         moveChild(-1)
       }),
+    },
+    {
+      title: "Kill subagent",
+      value: "subagent.kill",
+      category: "Session",
+      hidden: true,
+      enabled: !!session()?.parentID && subagentRunning(),
+      run: () => {
+        dialog.replace(() => <DialogSubagentKill sessionID={route.sessionID} />)
+      },
+    },
+    {
+      title: "Restart subagent",
+      value: "subagent.restart",
+      category: "Session",
+      hidden: true,
+      enabled: !!session()?.parentID && subagentKilled(),
+      run: () => {
+        dialog.replace(() => <DialogSubagentReprompt sessionID={route.sessionID} mode="restart" />)
+      },
+    },
+    {
+      title: "Interrupt & reprompt subagent",
+      value: "subagent.reprompt",
+      category: "Session",
+      hidden: true,
+      enabled: !!session()?.parentID && subagentRunning(),
+      run: () => {
+        dialog.replace(() => <DialogSubagentReprompt sessionID={route.sessionID} mode="reprompt" />)
+      },
     },
   ])
 
@@ -2257,6 +2298,10 @@ function Task(props: ToolProps) {
     if (value?.type !== "retry") return
     return value
   })
+  const killedFlavor = createMemo(() => {
+    const value = status()
+    return value?.type === "killed" ? value.flavor : undefined
+  })
 
   const duration = createMemo(() => {
     const first = messages().find((x) => x.role === "user")?.time.created
@@ -2291,14 +2336,19 @@ function Task(props: ToolProps) {
       content.push(`↳ ${formatCompletedSubagentDetail(tools().length, Locale.duration(duration()))}`)
     }
 
+    const flavor = killedFlavor()
+    if (flavor) {
+      content.push(`↳ Killed${flavor === "locked" ? " — task no longer needed" : ""}`)
+    }
+
     return content.join("\n")
   })
 
   return (
     <InlineTool
-      icon={props.part.state.status === "completed" ? "✓" : "│"}
+      icon={props.part.state.status === "completed" ? "✓" : killedFlavor() ? "✗" : "│"}
       separate={true}
-      color={retry() ? theme.error : undefined}
+      color={retry() ? theme.error : killedFlavor() === "locked" ? theme.error : killedFlavor() ? theme.warning : undefined}
       spinner={isRunning()}
       complete={stringValue(props.input.description)}
       pending="Delegating..."

@@ -74,6 +74,12 @@ export const RevertPayload = Schema.Struct(Struct.omit(SessionRevert.RevertInput
 export const PermissionResponsePayload = Schema.Struct({
   response: PermissionV1.Reply,
 })
+export const KillPayload = Schema.Struct({
+  flavor: Schema.Literals(["plain", "locked"]),
+})
+export const RepromptPayload = Schema.Struct({
+  note: Schema.optional(Schema.String),
+})
 
 export const SessionPaths = {
   list: root,
@@ -89,6 +95,8 @@ export const SessionPaths = {
   update: `${root}/:sessionID`,
   fork: `${root}/:sessionID/fork`,
   abort: `${root}/:sessionID/abort`,
+  kill: `${root}/:sessionID/kill`,
+  reprompt: `${root}/:sessionID/reprompt`,
   share: `${root}/:sessionID/share`,
   init: `${root}/:sessionID/init`,
   summarize: `${root}/:sessionID/summarize`,
@@ -260,6 +268,37 @@ export const SessionApi = HttpApi.make("session")
             identifier: "session.abort",
             summary: "Abort session",
             description: "Abort an active session and stop any ongoing AI processing or command execution.",
+          }),
+        ),
+        HttpApiEndpoint.post("kill", SessionPaths.kill, {
+          params: { sessionID: SessionID },
+          query: WorkspaceRoutingQuery,
+          payload: KillPayload,
+          success: described(Schema.Boolean, "Killed session"),
+          error: [HttpApiError.BadRequest, ApiNotFoundError],
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "session.kill",
+            summary: "Kill subagent",
+            description:
+              "Stop a running subagent. 'plain' leaves it resumable by the orchestrator or a human; 'locked' additionally " +
+              "refuses any future orchestrator-initiated resume of this exact session (a human can still restart it).",
+          }),
+        ),
+        HttpApiEndpoint.post("reprompt", SessionPaths.reprompt, {
+          params: { sessionID: SessionID },
+          query: WorkspaceRoutingQuery,
+          payload: RepromptPayload,
+          success: described(HttpApiSchema.NoContent, "Reprompt accepted"),
+          error: [HttpApiError.BadRequest, ApiNotFoundError],
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "session.reprompt",
+            summary: "Interrupt & reprompt, or restart, a subagent",
+            description:
+              "Stop whatever the session is currently doing (if anything) and resend its original first prompt, plus an " +
+              "optional note, as a fresh turn. Used for both 'Interrupt & Reprompt' on a running subagent and 'Restart' on " +
+              "a previously killed one — always allowed for a human-initiated call, regardless of any lock.",
           }),
         ),
         HttpApiEndpoint.post("init", SessionPaths.init, {

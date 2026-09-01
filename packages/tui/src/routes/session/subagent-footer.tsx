@@ -59,8 +59,21 @@ export function SubagentFooter() {
   const parentShortcut = useCommandShortcut("session.parent")
   const previousShortcut = useCommandShortcut("session.child.previous")
   const nextShortcut = useCommandShortcut("session.child.next")
-  const [hover, setHover] = createSignal<"parent" | "prev" | "next" | null>(null)
+  const killShortcut = useCommandShortcut("subagent.kill")
+  const restartShortcut = useCommandShortcut("subagent.restart")
+  const repromptShortcut = useCommandShortcut("subagent.reprompt")
+  const [hover, setHover] = createSignal<"parent" | "prev" | "next" | "kill" | "restart" | "reprompt" | null>(null)
   useTerminalDimensions()
+
+  const status = createMemo(() => sync.data.session_status[route.sessionID])
+  const running = createMemo(() => {
+    const type = status()?.type
+    return type === "busy" || type === "retry"
+  })
+  const killedFlavor = createMemo(() => {
+    const s = status()
+    return s?.type === "killed" ? s.flavor : undefined
+  })
 
   return (
     <box flexShrink={0}>
@@ -84,6 +97,13 @@ export function SubagentFooter() {
               <text style={{ fg: theme.textMuted }}>
                 ({subagentInfo().index} of {subagentInfo().total})
               </text>
+            </Show>
+            <Show when={killedFlavor()}>
+              {(flavor) => (
+                <text fg={flavor() === "locked" ? theme.error : theme.warning}>
+                  {flavor() === "locked" ? "Killed — task no longer needed" : "Killed"}
+                </text>
+              )}
             </Show>
             <Show when={usage()}>
               {(item) => (
@@ -124,6 +144,41 @@ export function SubagentFooter() {
                 Next <span style={{ fg: theme.textMuted }}>{nextShortcut()}</span>
               </text>
             </box>
+            <Show when={running()}>
+              <box
+                onMouseOver={() => setHover("reprompt")}
+                onMouseOut={() => setHover(null)}
+                onMouseUp={() => keymap.dispatchCommand("subagent.reprompt")}
+                backgroundColor={hover() === "reprompt" ? theme.backgroundElement : theme.backgroundPanel}
+              >
+                <text fg={theme.text}>
+                  {"Interrupt & Reprompt "}
+                  <span style={{ fg: theme.textMuted }}>{repromptShortcut()}</span>
+                </text>
+              </box>
+              <box
+                onMouseOver={() => setHover("kill")}
+                onMouseOut={() => setHover(null)}
+                onMouseUp={() => keymap.dispatchCommand("subagent.kill")}
+                backgroundColor={hover() === "kill" ? theme.backgroundElement : theme.backgroundPanel}
+              >
+                <text fg={theme.error}>
+                  Kill <span style={{ fg: theme.textMuted }}>{killShortcut()}</span>
+                </text>
+              </box>
+            </Show>
+            <Show when={killedFlavor()}>
+              <box
+                onMouseOver={() => setHover("restart")}
+                onMouseOut={() => setHover(null)}
+                onMouseUp={() => keymap.dispatchCommand("subagent.restart")}
+                backgroundColor={hover() === "restart" ? theme.backgroundElement : theme.backgroundPanel}
+              >
+                <text fg={theme.text}>
+                  Restart <span style={{ fg: theme.textMuted }}>{restartShortcut()}</span>
+                </text>
+              </box>
+            </Show>
           </box>
         </box>
       </box>

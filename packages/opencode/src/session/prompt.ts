@@ -106,6 +106,24 @@ export interface Interface {
   readonly shell: (input: ShellInput) => Effect.Effect<SessionV1.WithParts, Session.BusyError>
   readonly command: (input: CommandInput) => Effect.Effect<SessionV1.WithParts, Image.Error>
   readonly resolvePromptParts: (template: string) => Effect.Effect<PromptInput["parts"]>
+  /**
+   * Stops the session (and, recursively, all of its descendant sessions)
+   * and marks it killed. `sessionID` is marked with `flavor`; every
+   * descendant is always marked "plain" regardless of `flavor` — a lock
+   * only ever blocks orchestrator-initiated resumption of the exact node
+   * it was set on (see SessionPrompt.kill for the reasoning).
+   */
+  readonly kill: (sessionID: SessionID, flavor: "plain" | "locked") => Effect.Effect<void>
+  /**
+   * Stops whatever the session is currently doing (if anything) and sends
+   * a fresh prompt into it: the session's original first user prompt,
+   * reattached verbatim, plus an optional note appended. Used for both
+   * "Interrupt & Reprompt" (on a running session) and "Restart" (on a
+   * killed one) — this never checks or clears a lock itself, since a
+   * direct call here (as opposed to an orchestrator's task_id resume) is
+   * always a human's explicit decision and is meant to always work.
+   */
+  readonly reprompt: (sessionID: SessionID, note?: string) => Effect.Effect<SessionV1.WithParts, Image.Error>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionPrompt") {}
@@ -1480,6 +1498,57 @@ const layer = Layer.effect(
       return result
     })
 
+    const killOne = Effect.fn("SessionPrompt.killOne")(function* (sessionID: SessionID, flavor: "plain" | "locked") {
+      // Set "killed" before AND after cancel(): cancel() internally flips status to
+      // "idle" once the runner (if any) has actually stopped, which would otherwise
+      // race with — and could clobber — the "killed" marking a waiting orchestrator
+      // needs to see. The post-cancel set is the one guaranteed to be this fiber's
+      // last word on the session's status.
+      yield* status.set(sessionID, { type: "killed", flavor })
+      yield* state.cancel(sessionID)
+      yield* status.set(sessionID, { type: "killed", flavor })
+    })
+
+    const collectDescendants = Effect.fn("SessionPrompt.collectDescendants")(function* (sessionID: SessionID) {
+      const result: SessionID[] = []
+      const queue = [sessionID]
+      while (queue.length > 0) {
+        const current = queue.shift()!
+        const kids = yield* sessions.children(current)
+        for (const kid of kids) {
+          result.push(kid.id)
+          queue.push(kid.id)
+        }
+      }
+      return result
+    })
+
+    const kill = Effect.fn("SessionPrompt.kill")(function* (sessionID: SessionID, flavor: "plain" | "locked") {
+      const descendants = yield* collectDescendants(sessionID)
+      yield* killOne(sessionID, flavor)
+      yield* Effect.forEach(descendants, (id) => killOne(id, "plain"), { concurrency: "unbounded", discard: true })
+    })
+
+    const originalPromptText = Effect.fn("SessionPrompt.originalPromptText")(function* (sessionID: SessionID) {
+      const history = yield* MessageV2.stream(sessionID).pipe(Effect.provideService(Database.Service, database))
+      const first = history.find((m) => m.info.role === "user")
+      const text = first?.parts.find((p) => p.type === "text")
+      return text && "text" in text ? text.text : ""
+    })
+
+    const reprompt = Effect.fn("SessionPrompt.reprompt")(function* (sessionID: SessionID, note?: string) {
+      yield* state.cancel(sessionID)
+      const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
+      const original = yield* originalPromptText(sessionID)
+      const trimmedNote = note?.trim()
+      const text = trimmedNote ? `${original}\n\n---\nAdditional note from the user:\n${trimmedNote}` : original
+      return yield* prompt({
+        sessionID,
+        agent: session.agent,
+        parts: [{ type: "text", text }],
+      })
+    })
+
     return Service.of({
       cancel,
       prompt,
@@ -1487,6 +1556,8 @@ const layer = Layer.effect(
       shell,
       command,
       resolvePromptParts,
+      kill,
+      reprompt,
     })
   }),
 )

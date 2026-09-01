@@ -691,6 +691,10 @@ export type SessionStatus =
   | {
       type: "busy"
     }
+  | {
+      type: "killed"
+      flavor: "plain" | "locked"
+    }
 
 export type QuestionOption = {
   /**
@@ -9985,6 +9989,78 @@ export type SessionAbortResponses = {
 }
 
 export type SessionAbortResponse = SessionAbortResponses[keyof SessionAbortResponses]
+
+export type SessionKillData = {
+  body?: {
+    flavor: "plain" | "locked"
+  }
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/kill"
+}
+
+export type SessionKillErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+  /**
+   * NotFoundError
+   */
+  404: NotFoundError
+}
+
+export type SessionKillError = SessionKillErrors[keyof SessionKillErrors]
+
+export type SessionKillResponses = {
+  /**
+   * Killed session
+   */
+  200: boolean
+}
+
+export type SessionKillResponse = SessionKillResponses[keyof SessionKillResponses]
+
+export type SessionRepromptData = {
+  body?: {
+    note?: string
+  }
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/session/{sessionID}/reprompt"
+}
+
+export type SessionRepromptErrors = {
+  /**
+   * BadRequest | InvalidRequestError
+   */
+  400: EffectHttpApiErrorBadRequest | InvalidRequestError
+  /**
+   * NotFoundError
+   */
+  404: NotFoundError
+}
+
+export type SessionRepromptError = SessionRepromptErrors[keyof SessionRepromptErrors]
+
+export type SessionRepromptResponses = {
+  /**
+   * Reprompt accepted
+   */
+  204: void
+}
+
+export type SessionRepromptResponse = SessionRepromptResponses[keyof SessionRepromptResponses]
 
 export type SessionInitData = {
   body?: {
